@@ -262,6 +262,16 @@
             width: 100%;
         }
         
+        .note {
+            background: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 15px;
+            border-radius: 0 8px 8px 0;
+            margin-top: 20px;
+            font-size: 0.9rem;
+            color: #856404;
+        }
+        
         footer {
             text-align: center;
             padding: 20px;
@@ -302,6 +312,10 @@
         .notification.info {
             background: #2196f3;
         }
+        
+        .notification.warning {
+            background: #ff9800;
+        }
     </style>
 </head>
 <body>
@@ -334,9 +348,20 @@
                 </button>
             </div>
             
+            <div class="note">
+                <p><strong>Tip:</strong> Link Facebook yang didukung:</p>
+                <ul style="margin-left: 20px; margin-top: 5px;">
+                    <li>https://www.facebook.com/share/v/...</li>
+                    <li>https://facebook.com/watch/?v=...</li>
+                    <li>https://fb.watch/...</li>
+                    <li>https://www.facebook.com/.../videos/...</li>
+                </ul>
+            </div>
+            
             <div class="loading" id="loading">
                 <div class="spinner"></div>
                 <p>Memproses video...</p>
+                <p id="api-status" style="font-size: 0.9rem; color: #666; margin-top: 10px;"></p>
             </div>
             
             <div class="error" id="error">
@@ -356,12 +381,28 @@
     </div>
 
     <script>
-        // API Configuration - SESUAI DENGAN RESPONSE ANDA
+        // API Configuration
         const API_CONFIG = {
             key: 'd3a7ede4a3mshe6e3e796f1bebf9r1b157jsn64a0d13dbc61',
             host: 'facebook-videos-reels-downloader.p.rapidapi.com',
             url: 'https://facebook-videos-reels-downloader.p.rapidapi.com/get-video-info'
         };
+
+        // Alternative APIs (if main API fails)
+        const ALTERNATIVE_APIS = [
+            {
+                name: "API 1",
+                url: "https://api.qewertyy.dev/download/facebook",
+                method: "GET",
+                param: "url"
+            },
+            {
+                name: "API 2",
+                url: "https://api.fbdown.net/download",
+                method: "GET", 
+                param: "url"
+            }
+        ];
 
         // DOM Elements
         const elements = {
@@ -371,23 +412,23 @@
             loading: document.getElementById('loading'),
             error: document.getElementById('error'),
             errorMessage: document.getElementById('error-message'),
-            result: document.getElementById('result')
+            result: document.getElementById('result'),
+            apiStatus: document.getElementById('api-status')
         };
 
         // Notification System
         function showNotification(message, type = 'info') {
-            // Remove existing notification
             const existing = document.querySelector('.notification');
             if (existing) existing.remove();
             
-            // Create new notification
             const notification = document.createElement('div');
             notification.className = `notification ${type}`;
             
             const icons = {
                 success: 'check-circle',
                 error: 'exclamation-circle',
-                info: 'info-circle'
+                info: 'info-circle',
+                warning: 'exclamation-triangle'
             };
             
             notification.innerHTML = `
@@ -397,7 +438,6 @@
             
             document.body.appendChild(notification);
             
-            // Auto remove after 3 seconds
             setTimeout(() => {
                 notification.style.opacity = '0';
                 notification.style.transform = 'translateX(100%)';
@@ -418,26 +458,33 @@
             }
         });
 
-        // Validate Facebook URL
+        // Validate Facebook URL - DIPERBAIKI
         function isValidFacebookUrl(url) {
+            // Accept all URLs that contain facebook or fb
+            // Let the API handle the validation
             const patterns = [
-                /facebook\.com\/watch\/\?v=\d+/,
-                /facebook\.com\/.*\/videos\/\d+/,
-                /fb\.watch\/.+/,
-                /facebook\.com\/.*\/reel\/\d+/
+                /facebook\.com/i,
+                /fb\.com/i,
+                /fb\.watch/i,
+                /web\.facebook\.com/i,
+                /m\.facebook\.com/i
             ];
             
-            return patterns.some(pattern => pattern.test(url));
+            return patterns.some(pattern => pattern.test(url)) && url.includes('http');
         }
 
         // Show/hide loading
-        function setLoading(show) {
+        function setLoading(show, message = '') {
             if (show) {
                 elements.loading.classList.add('active');
                 elements.result.classList.remove('active');
                 elements.error.classList.remove('active');
+                if (message) {
+                    elements.apiStatus.textContent = message;
+                }
             } else {
                 elements.loading.classList.remove('active');
+                elements.apiStatus.textContent = '';
             }
         }
 
@@ -453,8 +500,8 @@
             elements.error.classList.remove('active');
         }
 
-        // Fetch video from API
-        async function fetchVideo(url) {
+        // Fetch video from MAIN API
+        async function fetchFromMainAPI(url) {
             try {
                 const response = await fetch(`${API_CONFIG.url}?url=${encodeURIComponent(url)}`, {
                     method: 'GET',
@@ -468,11 +515,63 @@
                     throw new Error(`HTTP ${response.status}: ${response.statusText}`);
                 }
 
-                return await response.json();
+                const data = await response.json();
+                return { success: true, data: data, source: 'Main API' };
             } catch (error) {
-                console.error('API Error:', error);
-                throw error;
+                console.error('Main API Error:', error);
+                return { success: false, error: error.message };
             }
+        }
+
+        // Fetch from alternative API
+        async function fetchFromAlternativeAPI(url, api) {
+            try {
+                let response;
+                
+                if (api.method === 'GET') {
+                    response = await fetch(`${api.url}?${api.param}=${encodeURIComponent(url)}`);
+                } else {
+                    const formData = new URLSearchParams();
+                    formData.append(api.param, url);
+                    response = await fetch(api.url, {
+                        method: 'POST',
+                        headers: api.headers || {},
+                        body: formData
+                    });
+                }
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+
+                const data = await response.json();
+                return { success: true, data: data, source: api.name };
+            } catch (error) {
+                console.error(`${api.name} Error:`, error);
+                return { success: false, error: error.message };
+            }
+        }
+
+        // Try all APIs
+        async function fetchVideo(url) {
+            // Try main API first
+            setLoading(true, 'Mencoba Main API...');
+            let result = await fetchFromMainAPI(url);
+            
+            if (!result.success) {
+                // Try alternative APIs
+                for (let i = 0; i < ALTERNATIVE_APIS.length; i++) {
+                    const api = ALTERNATIVE_APIS[i];
+                    setLoading(true, `Mencoba ${api.name}... (${i + 1}/${ALTERNATIVE_APIS.length})`);
+                    
+                    result = await fetchFromAlternativeAPI(url, api);
+                    if (result.success) break;
+                    
+                    await new Promise(resolve => setTimeout(resolve, 1000)); // Delay between APIs
+                }
+            }
+            
+            return result;
         }
 
         // Create download card
@@ -481,7 +580,7 @@
                 <div class="download-card">
                     <h4><i class="fas fa-${icon}"></i> ${title}</h4>
                     <p>Klik untuk mendownload</p>
-                    <button class="btn" onclick="downloadFile('${url}', '${title}')">
+                    <button class="btn download-btn" data-url="${url}">
                         <i class="fas fa-download"></i> Download
                     </button>
                 </div>
@@ -489,83 +588,108 @@
         }
 
         // Display result
-        function displayResult(apiData) {
+        function displayResult(result) {
             hideError();
             
-            // Check API response format based on your screenshot
-            if (apiData.status === "ok" && apiData.video) {
-                const video = apiData.video;
-                let resultHTML = `
-                    <div class="video-preview">
+            if (!result.success) {
+                showError(`Gagal mendapatkan video. Error: ${result.error}`);
+                return;
+            }
+            
+            const data = result.data;
+            let resultHTML = '<div class="video-preview">';
+            
+            // Handle different API response formats
+            
+            // Format 1: Main API format (from your screenshot)
+            if (data.status === "ok" && data.video) {
+                const video = data.video;
+                
+                if (video.thumbnail_url) {
+                    resultHTML += `
                         <div class="video-thumbnail">
                             <img src="${video.thumbnail_url}" 
                                  alt="Video Thumbnail"
                                  onerror="this.src='https://images.unsplash.com/photo-1611605698335-8b1569810432?ixlib=rb-4.0.3&auto=format&fit=crop&w=1000&q=80'">
                         </div>
-                        <div class="download-options">
-                `;
+                    `;
+                }
                 
-                // Add SD quality if available
+                resultHTML += '<div class="download-options">';
+                
                 if (video.sd_video_url) {
                     resultHTML += createDownloadCard('Kualitas SD', video.sd_video_url, 'compress-alt');
                 }
                 
-                // Add HD quality if available
                 if (video.hd_video_url) {
                     resultHTML += createDownloadCard('Kualitas HD', video.hd_video_url, 'hd');
                 }
                 
+            } 
+            // Format 2: Alternative API format
+            else if (data.links && Array.isArray(data.links)) {
+                resultHTML += '<div class="download-options">';
+                data.links.forEach((link, index) => {
+                    resultHTML += createDownloadCard(
+                        link.quality || `Kualitas ${index + 1}`,
+                        link.url,
+                        'video'
+                    );
+                });
+            }
+            // Format 3: Simple video_url format
+            else if (data.video_url) {
+                resultHTML += '<div class="download-options">';
+                resultHTML += createDownloadCard('Video', data.video_url, 'download');
+            }
+            // Unknown format
+            else {
+                resultHTML += '<div class="download-options">';
                 resultHTML += `
-                        </div>
+                    <div class="download-card">
+                        <h4><i class="fas fa-info-circle"></i> Response tidak dikenali</h4>
+                        <p>API mengembalikan format yang tidak bisa diproses</p>
+                        <button class="btn" onclick="console.log('API Response:', ${JSON.stringify(data)})">
+                            <i class="fas fa-code"></i> Lihat Data
+                        </button>
                     </div>
                 `;
-                
-                elements.result.innerHTML = resultHTML;
-                elements.result.classList.add('active');
-                
-                // Scroll to result
-                setTimeout(() => {
-                    elements.result.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                }, 100);
-                
-            } else {
-                showError('Format response tidak dikenali');
             }
+            
+            resultHTML += '</div></div>';
+            elements.result.innerHTML = resultHTML;
+            elements.result.classList.add('active');
+            
+            // Add event listeners to download buttons
+            document.querySelectorAll('.download-btn').forEach(btn => {
+                btn.addEventListener('click', function() {
+                    const url = this.getAttribute('data-url');
+                    if (url) {
+                        window.open(url, '_blank');
+                        showNotification('Membuka link download...', 'info');
+                    }
+                });
+            });
+            
+            // Scroll to result
+            setTimeout(() => {
+                elements.result.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }, 100);
         }
-
-        // Download file function
-        window.downloadFile = function(url, title) {
-            if (!url || url === '#') {
-                showNotification('Link download tidak tersedia', 'error');
-                return;
-            }
-            
-            // Create temporary link
-            const link = document.createElement('a');
-            link.href = url;
-            link.target = '_blank';
-            link.download = `facebook_video_${title.toLowerCase().replace(/\s+/g, '_')}.mp4`;
-            
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-            
-            showNotification(`Download ${title} dimulai`, 'success');
-        };
 
         // Main download handler
         elements.downloadBtn.addEventListener('click', async () => {
             const url = elements.urlInput.value.trim();
             
-            // Validation
+            // Basic validation
             if (!url) {
                 showError('Harap masukkan link video Facebook');
                 elements.urlInput.focus();
                 return;
             }
             
-            if (!isValidFacebookUrl(url)) {
-                showError('Format link Facebook tidak valid');
+            if (!url.startsWith('http')) {
+                showError('Link harus dimulai dengan http:// atau https://');
                 elements.urlInput.focus();
                 return;
             }
@@ -575,19 +699,20 @@
             hideError();
             
             try {
-                const data = await fetchVideo(url);
+                const result = await fetchVideo(url);
+                setLoading(false);
                 
-                if (data.status === "ok") {
-                    displayResult(data);
-                    showNotification('Video berhasil ditemukan!', 'success');
+                if (result.success) {
+                    displayResult(result);
+                    showNotification(`Video ditemukan menggunakan ${result.source}!`, 'success');
                 } else {
-                    showError(data.message || 'Video tidak ditemukan');
+                    showError(`Gagal mendapatkan video. Coba link lain.`);
+                    showNotification('Semua API gagal, coba video lain', 'error');
                 }
             } catch (error) {
-                showError(`Gagal mendapatkan video: ${error.message}`);
-                showNotification('Error: ' + error.message, 'error');
-            } finally {
                 setLoading(false);
+                showError(`Error: ${error.message}`);
+                showNotification('Terjadi kesalahan', 'error');
             }
         });
 
@@ -601,9 +726,12 @@
         // Auto-focus on input
         elements.urlInput.focus();
         
+        // Pre-fill with your example URL
+        elements.urlInput.value = 'https://www.facebook.com/share/v/1CdRiawCSq/';
+        
         // Show welcome message
         setTimeout(() => {
-            showNotification('Tempel link Facebook video dan klik Download', 'info');
+            showNotification('Link contoh sudah terisi. Klik Download untuk mencoba!', 'info');
         }, 1000);
     </script>
 </body>
